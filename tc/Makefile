@@ -55,6 +55,7 @@ TCMODULES += q_fq_codel.o
 TCMODULES += q_fq.o
 TCMODULES += q_pie.o
 TCMODULES += q_hhf.o
+TCMODULES += q_red_csc573.o
 
 ifeq ($(TC_CONFIG_IPSET), y)
   ifeq ($(TC_CONFIG_XT), y)
