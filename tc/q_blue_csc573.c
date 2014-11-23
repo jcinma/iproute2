@@ -24,7 +24,7 @@
 #include "utils.h"
 #include "tc_util.h"
 
-#include "tc_red.h"
+//#include "tc_red.h"
 
 static void explain(void)
 {
@@ -35,7 +35,7 @@ static void explain(void)
 
 static int blue_csc573_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
 {
-	struct tc_red_qopt opt;
+	/*struct tc_red_qopt opt;
 	unsigned burst = 0;
 	unsigned avpkt = 0;
 	double probability = 0.02;
@@ -119,7 +119,7 @@ static int blue_csc573_parse_opt(struct qdisc_util *qu, int argc, char **argv, s
 	/* Compute default min/max thresholds based on
 	 * Sally Floyd's recommendations:
 	 * http://www.icir.org/floyd/REDparameters.txt
-	 */
+	 *
 	if (!opt.qth_max)
 		opt.qth_max = opt.qth_min ? opt.qth_min * 3 : opt.limit / 4;
 	if (!opt.qth_min)
@@ -150,7 +150,7 @@ static int blue_csc573_parse_opt(struct qdisc_util *qu, int argc, char **argv, s
 	addattr_l(n, 1024, TCA_RED_STAB, sbuf, 256);
 	max_P = probability * pow(2, 32);
 	addattr_l(n, 1024, TCA_RED_MAX_P, &max_P, sizeof(max_P));
-	tail->rta_len = (void *) NLMSG_TAIL(n) - (void *) tail;
+	tail->rta_len = (void *) NLMSG_TAIL(n) - (void *) tail;*/
 	return 0;
 }
 
