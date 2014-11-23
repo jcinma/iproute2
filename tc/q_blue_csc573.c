@@ -1,14 +1,16 @@
 /*
- * q_red.c		RED.
+ * q_blue_csc573.c	Stochastic Fair Blue.
  *
  *		This program is free software; you can redistribute it and/or
  *		modify it under the terms of the GNU General Public License
  *		as published by the Free Software Foundation; either version
  *		2 of the License, or (at your option) any later version.
  *
- * Authors:	Alexey Kuznetsov, <kuznet@ms2.inr.ac.ru>
+ * Authors:	Juliusz Chroboczek <jch@pps.jussieu.fr>
  *
  */
+
+
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,88 +21,102 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <string.h>
-#include <math.h>
 
 #include "utils.h"
 #include "tc_util.h"
 
-//#include "tc_red.h"
-
 static void explain(void)
 {
-	fprintf(stderr, "Usage: ... red limit BYTES [min BYTES] [max BYTES] avpkt BYTES [burst PACKETS]\n");
-	fprintf(stderr, "               [adaptive] [probability PROBABILITY] bandwidth KBPS\n");
-	fprintf(stderr, "               [ecn] [harddrop]\n");
+	fprintf(stderr,
+		"Usage: ... blue_csc573 [ rehash SECS ] [ db SECS ]\n"
+		"	    [ limit PACKETS ] [ max PACKETS ] [ target PACKETS ]\n"
+		"	    [ increment FLOAT ] [ decrement FLOAT ]\n"
+		"	    [ penalty_rate PPS ] [ penalty_burst PACKETS ]\n");
 }
 
-static int blue_csc573_parse_opt(struct qdisc_util *qu, int argc, char **argv, struct nlmsghdr *n)
+static int get_prob(__u32 *val, const char *arg)
 {
-	/*struct tc_red_qopt opt;
-	unsigned burst = 0;
-	unsigned avpkt = 0;
-	double probability = 0.02;
-	unsigned rate = 0;
-	int wlog;
-	__u8 sbuf[256];
-	__u32 max_P;
+	double d;
+	char *ptr;
+
+	if (!arg || !*arg)
+		return -1;
+	d = strtod(arg, &ptr);
+	if (!ptr || ptr == arg || d < 0.0 || d > 1.0)
+		return -1;
+	*val = (__u32)(d * blue_csc573_MAX_PROB + 0.5);
+	return 0;
+}
+
+static int blue_csc573_parse_opt(struct qdisc_util *qu, int argc, char **argv,
+			 struct nlmsghdr *n)
+{
+	struct tc_blue_csc573_qopt opt;
 	struct rtattr *tail;
 
 	memset(&opt, 0, sizeof(opt));
+	opt.rehash_interval = 600*1000;
+	opt.warmup_time = 60*1000;
+	opt.penalty_rate = 10;
+	opt.penalty_burst = 20;
+	opt.increment = (blue_csc573_MAX_PROB + 1000) / 2000;
+	opt.decrement = (blue_csc573_MAX_PROB + 10000) / 20000;
 
 	while (argc > 0) {
-		if (strcmp(*argv, "limit") == 0) {
+	    if (strcmp(*argv, "rehash") == 0) {
 			NEXT_ARG();
-			if (get_size(&opt.limit, *argv)) {
-				fprintf(stderr, "Illegal \"limit\"\n");
+			if (get_u32(&opt.rehash_interval, *argv, 0)) {
+				fprintf(stderr, "Illegal \"rehash\"\n");
 				return -1;
 			}
-		} else if (strcmp(*argv, "min") == 0) {
+		} else if (strcmp(*argv, "db") == 0) {
 			NEXT_ARG();
-			if (get_size(&opt.qth_min, *argv)) {
-				fprintf(stderr, "Illegal \"min\"\n");
+			if (get_u32(&opt.warmup_time, *argv, 0)) {
+				fprintf(stderr, "Illegal \"db\"\n");
+				return -1;
+			}
+		} else if (strcmp(*argv, "limit") == 0) {
+			NEXT_ARG();
+			if (get_u32(&opt.limit, *argv, 0)) {
+				fprintf(stderr, "Illegal \"limit\"\n");
 				return -1;
 			}
 		} else if (strcmp(*argv, "max") == 0) {
 			NEXT_ARG();
-			if (get_size(&opt.qth_max, *argv)) {
+			if (get_u32(&opt.max, *argv, 0)) {
 				fprintf(stderr, "Illegal \"max\"\n");
 				return -1;
 			}
-		} else if (strcmp(*argv, "burst") == 0) {
+		} else if (strcmp(*argv, "target") == 0) {
 			NEXT_ARG();
-			if (get_unsigned(&burst, *argv, 0)) {
-				fprintf(stderr, "Illegal \"burst\"\n");
+			if (get_u32(&opt.bin_size, *argv, 0)) {
+				fprintf(stderr, "Illegal \"target\"\n");
 				return -1;
 			}
-		} else if (strcmp(*argv, "avpkt") == 0) {
+		} else if (strcmp(*argv, "increment") == 0) {
 			NEXT_ARG();
-			if (get_size(&avpkt, *argv)) {
-				fprintf(stderr, "Illegal \"avpkt\"\n");
+			if (get_prob(&opt.increment, *argv)) {
+				fprintf(stderr, "Illegal \"increment\"\n");
 				return -1;
 			}
-		} else if (strcmp(*argv, "probability") == 0) {
+		} else if (strcmp(*argv, "decrement") == 0) {
 			NEXT_ARG();
-			if (sscanf(*argv, "%lg", &probability) != 1) {
-				fprintf(stderr, "Illegal \"probability\"\n");
+			if (get_prob(&opt.decrement, *argv)) {
+				fprintf(stderr, "Illegal \"decrement\"\n");
 				return -1;
 			}
-		} else if (strcmp(*argv, "bandwidth") == 0) {
+		} else if (strcmp(*argv, "penalty_rate") == 0) {
 			NEXT_ARG();
-			if (get_rate(&rate, *argv)) {
-				fprintf(stderr, "Illegal \"bandwidth\"\n");
+			if (get_u32(&opt.penalty_rate, *argv, 0)) {
+				fprintf(stderr, "Illegal \"penalty_rate\"\n");
 				return -1;
 			}
-		} else if (strcmp(*argv, "ecn") == 0) {
-			opt.flags |= TC_RED_ECN;
-		} else if (strcmp(*argv, "harddrop") == 0) {
-			opt.flags |= TC_RED_HARDDROP;
-		} else if (strcmp(*argv, "adaptative") == 0) {
-			opt.flags |= TC_RED_ADAPTATIVE;
-		} else if (strcmp(*argv, "adaptive") == 0) {
-			opt.flags |= TC_RED_ADAPTATIVE;
-		} else if (strcmp(*argv, "help") == 0) {
-			explain();
-			return -1;
+		} else if (strcmp(*argv, "penalty_burst") == 0) {
+			NEXT_ARG();
+			if (get_u32(&opt.penalty_burst, *argv, 0)) {
+				fprintf(stderr, "Illegal \"penalty_burst\"\n");
+				return -1;
+			}
 		} else {
 			fprintf(stderr, "What is \"%s\"?\n", *argv);
 			explain();
@@ -109,116 +125,72 @@ static int blue_csc573_parse_opt(struct qdisc_util *qu, int argc, char **argv, s
 		argc--; argv++;
 	}
 
-	if (rate == 0)
-		get_rate(&rate, "10Mbit");
-
-	if (!opt.limit || !avpkt) {
-		fprintf(stderr, "RED: Required parameter (limit, avpkt) is missing\n");
-		return -1;
+	if (opt.max == 0) {
+		if (opt.bin_size >= 1)
+			opt.max = (opt.bin_size * 5 + 1) / 4;
+		else
+			opt.max = 25;
 	}
-	/* Compute default min/max thresholds based on
-	 * Sally Floyd's recommendations:
-	 * http://www.icir.org/floyd/REDparameters.txt
-	 *
-	if (!opt.qth_max)
-		opt.qth_max = opt.qth_min ? opt.qth_min * 3 : opt.limit / 4;
-	if (!opt.qth_min)
-		opt.qth_min = opt.qth_max / 3;
-	if (!burst)
-		burst = (2 * opt.qth_min + opt.qth_max) / (3 * avpkt);
-	if ((wlog = tc_red_eval_ewma(opt.qth_min, burst, avpkt)) < 0) {
-		fprintf(stderr, "RED: failed to calculate EWMA constant.\n");
-		return -1;
-	}
-	if (wlog >= 10)
-		fprintf(stderr, "RED: WARNING. Burst %d seems to be too large.\n", burst);
-	opt.Wlog = wlog;
-	if ((wlog = tc_red_eval_P(opt.qth_min, opt.qth_max, probability)) < 0) {
-		fprintf(stderr, "RED: failed to calculate probability.\n");
-		return -1;
-	}
-	opt.Plog = wlog;
-	if ((wlog = tc_red_eval_idle_damping(opt.Wlog, avpkt, rate, sbuf)) < 0) {
-		fprintf(stderr, "RED: failed to calculate idle damping table.\n");
-		return -1;
-	}
-	opt.Scell_log = wlog;
+	if (opt.bin_size == 0)
+		opt.bin_size = (opt.max * 4 + 3) / 5;
 
 	tail = NLMSG_TAIL(n);
 	addattr_l(n, 1024, TCA_OPTIONS, NULL, 0);
-	addattr_l(n, 1024, TCA_RED_PARMS, &opt, sizeof(opt));
-	addattr_l(n, 1024, TCA_RED_STAB, sbuf, 256);
-	max_P = probability * pow(2, 32);
-	addattr_l(n, 1024, TCA_RED_MAX_P, &max_P, sizeof(max_P));
-	tail->rta_len = (void *) NLMSG_TAIL(n) - (void *) tail;*/
+	addattr_l(n, 1024, TCA_blue_csc573_PARMS, &opt, sizeof(opt));
+	tail->rta_len = (void *) NLMSG_TAIL(n) - (void *) tail;
 	return 0;
 }
 
 static int blue_csc573_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 {
-	struct rtattr *tb[TCA_RED_MAX + 1];
-	struct tc_red_qopt *qopt;
-	__u32 max_P = 0;
-	SPRINT_BUF(b1);
-	SPRINT_BUF(b2);
-	SPRINT_BUF(b3);
+	struct rtattr *tb[__TCA_blue_csc573_MAX];
+	struct tc_blue_csc573_qopt *qopt;
 
 	if (opt == NULL)
 		return 0;
 
-	parse_rtattr_nested(tb, TCA_RED_MAX, opt);
-
-	if (tb[TCA_RED_PARMS] == NULL)
+	parse_rtattr_nested(tb, TCA_blue_csc573_MAX, opt);
+	if (tb[TCA_blue_csc573_PARMS] == NULL)
 		return -1;
-	qopt = RTA_DATA(tb[TCA_RED_PARMS]);
-	if (RTA_PAYLOAD(tb[TCA_RED_PARMS])  < sizeof(*qopt))
+	qopt = RTA_DATA(tb[TCA_blue_csc573_PARMS]);
+	if (RTA_PAYLOAD(tb[TCA_blue_csc573_PARMS]) < sizeof(*qopt))
 		return -1;
 
-	if (tb[TCA_RED_MAX_P] &&
-	    RTA_PAYLOAD(tb[TCA_RED_MAX_P]) >= sizeof(__u32))
-		max_P = rta_getattr_u32(tb[TCA_RED_MAX_P]);
+	fprintf(f,
+		"limit %d max %d target %d\n"
+		"  increment %.5f decrement %.5f penalty rate %d burst %d "
+		"(%ums %ums)",
+		qopt->limit, qopt->max, qopt->bin_size,
+		(double)qopt->increment / blue_csc573_MAX_PROB,
+		(double)qopt->decrement / blue_csc573_MAX_PROB,
+		qopt->penalty_rate, qopt->penalty_burst,
+		qopt->rehash_interval, qopt->warmup_time);
 
-	fprintf(f, "limit %s min %s max %s ",
-		sprint_size(qopt->limit, b1),
-		sprint_size(qopt->qth_min, b2),
-		sprint_size(qopt->qth_max, b3));
-	if (qopt->flags & TC_RED_ECN)
-		fprintf(f, "ecn ");
-	if (qopt->flags & TC_RED_HARDDROP)
-		fprintf(f, "harddrop ");
-	if (qopt->flags & TC_RED_ADAPTATIVE)
-		fprintf(f, "adaptive ");
-	if (show_details) {
-		fprintf(f, "ewma %u ", qopt->Wlog);
-		if (max_P)
-			fprintf(f, "probability %lg ", max_P / pow(2, 32));
-		else
-			fprintf(f, "Plog %u ", qopt->Plog);
-		fprintf(f, "Scell_log %u", qopt->Scell_log);
-	}
 	return 0;
 }
 
-static int blue_csc573_print_xstats(struct qdisc_util *qu, FILE *f, struct rtattr *xstats)
+static int blue_csc573_print_xstats(struct qdisc_util *qu, FILE *f,
+			    struct rtattr *xstats)
 {
-#ifdef TC_RED_ECN
-	struct tc_red_xstats *st;
+    struct tc_blue_csc573_xstats *st;
 
-	if (xstats == NULL)
-		return 0;
+    if (xstats == NULL)
+	    return 0;
 
-	if (RTA_PAYLOAD(xstats) < sizeof(*st))
-		return -1;
+    if (RTA_PAYLOAD(xstats) < sizeof(*st))
+	    return -1;
 
-	st = RTA_DATA(xstats);
-	fprintf(f, "  marked %u early %u pdrop %u other %u",
-		st->marked, st->early, st->pdrop, st->other);
-	return 0;
+    st = RTA_DATA(xstats);
+    fprintf(f,
+	    "  earlydrop %u penaltydrop %u bucketdrop %u queuedrop %u childdrop %u marked %u\n"
+	    "  maxqlen %u maxprob %.5f avgprob %.5f ",
+	    st->earlydrop, st->penaltydrop, st->bucketdrop, st->queuedrop, st->childdrop,
+	    st->marked,
+	    st->maxqlen, (double)st->maxprob / blue_csc573_MAX_PROB,
+		(double)st->avgprob / blue_csc573_MAX_PROB);
 
-#endif
-	return 0;
+    return 0;
 }
-
 
 struct qdisc_util blue_csc573_qdisc_util = {
 	.id		= "blue_csc573",
