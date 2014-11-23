@@ -1,5 +1,5 @@
 /*
- * q_blue_csc573.c	Stochastic Fair Blue.
+ * q_sfb.c	Stochastic Fair Blue.
  *
  *		This program is free software; you can redistribute it and/or
  *		modify it under the terms of the GNU General Public License
@@ -51,72 +51,18 @@ static int get_prob(__u32 *val, const char *arg)
 static int blue_csc573_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 			 struct nlmsghdr *n)
 {
-	struct tc_blue_csc573_qopt opt;
+	struct tc_fifo_qopt opt;
 	struct rtattr *tail;
 
 	memset(&opt, 0, sizeof(opt));
-	opt.rehash_interval = 600*1000;
-	opt.warmup_time = 60*1000;
-	opt.penalty_rate = 10;
-	opt.penalty_burst = 20;
-	opt.increment = (blue_csc573_MAX_PROB + 1000) / 2000;
-	opt.decrement = (blue_csc573_MAX_PROB + 10000) / 20000;
+	opt.limit = 5000000
 
 	while (argc > 0) {
-	    if (strcmp(*argv, "rehash") == 0) {
-			NEXT_ARG();
-			if (get_u32(&opt.rehash_interval, *argv, 0)) {
-				fprintf(stderr, "Illegal \"rehash\"\n");
-				return -1;
-			}
-		} else if (strcmp(*argv, "db") == 0) {
-			NEXT_ARG();
-			if (get_u32(&opt.warmup_time, *argv, 0)) {
-				fprintf(stderr, "Illegal \"db\"\n");
-				return -1;
-			}
-		} else if (strcmp(*argv, "limit") == 0) {
+		if (strcmp(*argv, "limit") == 0) {
 			NEXT_ARG();
 			if (get_u32(&opt.limit, *argv, 0)) {
 				fprintf(stderr, "Illegal \"limit\"\n");
 				return -1;
-			}
-		} else if (strcmp(*argv, "max") == 0) {
-			NEXT_ARG();
-			if (get_u32(&opt.max, *argv, 0)) {
-				fprintf(stderr, "Illegal \"max\"\n");
-				return -1;
-			}
-		} else if (strcmp(*argv, "target") == 0) {
-			NEXT_ARG();
-			if (get_u32(&opt.bin_size, *argv, 0)) {
-				fprintf(stderr, "Illegal \"target\"\n");
-				return -1;
-			}
-		} else if (strcmp(*argv, "increment") == 0) {
-			NEXT_ARG();
-			if (get_prob(&opt.increment, *argv)) {
-				fprintf(stderr, "Illegal \"increment\"\n");
-				return -1;
-			}
-		} else if (strcmp(*argv, "decrement") == 0) {
-			NEXT_ARG();
-			if (get_prob(&opt.decrement, *argv)) {
-				fprintf(stderr, "Illegal \"decrement\"\n");
-				return -1;
-			}
-		} else if (strcmp(*argv, "penalty_rate") == 0) {
-			NEXT_ARG();
-			if (get_u32(&opt.penalty_rate, *argv, 0)) {
-				fprintf(stderr, "Illegal \"penalty_rate\"\n");
-				return -1;
-			}
-		} else if (strcmp(*argv, "penalty_burst") == 0) {
-			NEXT_ARG();
-			if (get_u32(&opt.penalty_burst, *argv, 0)) {
-				fprintf(stderr, "Illegal \"penalty_burst\"\n");
-				return -1;
-			}
 		} else {
 			fprintf(stderr, "What is \"%s\"?\n", *argv);
 			explain();
@@ -124,47 +70,27 @@ static int blue_csc573_parse_opt(struct qdisc_util *qu, int argc, char **argv,
 		}
 		argc--; argv++;
 	}
-
-	if (opt.max == 0) {
-		if (opt.bin_size >= 1)
-			opt.max = (opt.bin_size * 5 + 1) / 4;
-		else
-			opt.max = 25;
-	}
-	if (opt.bin_size == 0)
-		opt.bin_size = (opt.max * 4 + 3) / 5;
-
 	tail = NLMSG_TAIL(n);
 	addattr_l(n, 1024, TCA_OPTIONS, NULL, 0);
-	addattr_l(n, 1024, TCA_blue_csc573_PARMS, &opt, sizeof(opt));
+	addattr_l(n, 1024, TCA_FIFO_PARMS, &opt, sizeof(opt));
 	tail->rta_len = (void *) NLMSG_TAIL(n) - (void *) tail;
 	return 0;
 }
 
 static int blue_csc573_print_opt(struct qdisc_util *qu, FILE *f, struct rtattr *opt)
 {
-	struct rtattr *tb[__TCA_blue_csc573_MAX];
-	struct tc_blue_csc573_qopt *qopt;
+	struct rtattr *tb[__TCA_FIFO_MAX];
+	struct tc_fifo_qopt *qopt;
 
 	if (opt == NULL)
 		return 0;
 
-	parse_rtattr_nested(tb, TCA_blue_csc573_MAX, opt);
-	if (tb[TCA_blue_csc573_PARMS] == NULL)
+	parse_rtattr_nested(tb, TCA_FIFO_MAX, opt);
+	if (tb[TCA_FIFO_PARMS] == NULL)
 		return -1;
-	qopt = RTA_DATA(tb[TCA_blue_csc573_PARMS]);
-	if (RTA_PAYLOAD(tb[TCA_blue_csc573_PARMS]) < sizeof(*qopt))
+	qopt = RTA_DATA(tb[TCA_FIFO_PARMS]);
+	if (RTA_PAYLOAD(tb[TCA_FIFO_PARMS]) < sizeof(*qopt))
 		return -1;
-
-	fprintf(f,
-		"limit %d max %d target %d\n"
-		"  increment %.5f decrement %.5f penalty rate %d burst %d "
-		"(%ums %ums)",
-		qopt->limit, qopt->max, qopt->bin_size,
-		(double)qopt->increment / blue_csc573_MAX_PROB,
-		(double)qopt->decrement / blue_csc573_MAX_PROB,
-		qopt->penalty_rate, qopt->penalty_burst,
-		qopt->rehash_interval, qopt->warmup_time);
 
 	return 0;
 }
